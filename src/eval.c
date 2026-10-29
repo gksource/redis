@@ -1057,8 +1057,10 @@ sds *ldbReplParseCommand(int *argcp, char** err) {
     char *plen = p+1; /* Multi bulk len pointer. */
     p = strstr(p,"\r\n"); if (!p) goto keep_reading;
     *p = '\0'; p += 2;
-    *argcp = atoi(plen);
-    if (*argcp <= 0 || *argcp > 1024) goto protoerr;
+    long long llargc;
+    if (!string2ll(plen,strlen(plen),&llargc)) goto protoerr;
+    if (llargc <= 0 || llargc > 1024) goto protoerr;
+    *argcp = (int)llargc;
 
     /* Parse each argument. */
     argv = zmalloc(sizeof(sds)*(*argcp));
@@ -1071,8 +1073,10 @@ sds *ldbReplParseCommand(int *argcp, char** err) {
         plen = p+1; /* Bulk string len pointer. */
         p = strstr(p,"\r\n"); if (!p) goto keep_reading;
         *p = '\0'; p += 2;
-        int slen = atoi(plen); /* Length of this arg. */
-        if (slen <= 0 || slen > 1024) goto protoerr;
+        long long llslen; /* Length of this arg. */
+        if (!string2ll(plen,strlen(plen),&llslen)) goto protoerr;
+        if (llslen <= 0 || llslen > 1024) goto protoerr;
+        int slen = (int)llslen;
         if ((size_t)(p + slen + 2 - copy) > sdslen(copy) ) goto keep_reading;
         argv[argc++] = sdsnewlen(p,slen);
         p += slen; /* Skip the already parsed argument. */
@@ -1564,7 +1568,10 @@ void ldbTrace(lua_State *lua) {
  * ldb.maxlen variable. */
 void ldbMaxlen(sds *argv, int argc) {
     if (argc == 2) {
-        int newval = atoi(argv[1]);
+        long long llval;
+        int newval = 0;
+        if (string2ll(argv[1],sdslen(argv[1]),&llval) &&
+            llval >= 0 && llval <= INT_MAX) newval = (int)llval;
         ldb.maxlen_hint_sent = 1; /* User knows about this command. */
         if (newval != 0 && newval <= 60) newval = 60;
         ldb.maxlen = newval;
@@ -1683,11 +1690,16 @@ ldbLog(sdsnew("                     next line of code."));
             ldbSendLogs();
         } else if (!strcasecmp(argv[0],"l") || !strcasecmp(argv[0],"list")){
             int around = ldb.currentline, ctx = 5;
+            long long llnum;
             if (argc > 1) {
-                int num = atoi(argv[1]);
-                if (num > 0) around = num;
+                if (string2ll(argv[1],sdslen(argv[1]),&llnum) &&
+                    llnum > 0 && llnum <= INT_MAX) around = (int)llnum;
             }
-            if (argc > 2) ctx = atoi(argv[2]);
+            if (argc > 2) {
+                if (string2ll(argv[2],sdslen(argv[2]),&llnum) &&
+                    llnum >= INT_MIN && llnum <= INT_MAX) ctx = (int)llnum;
+                else ctx = 0;
+            }
             ldbList(around,ctx);
             ldbSendLogs();
         } else if (!strcasecmp(argv[0],"w") || !strcasecmp(argv[0],"whole")){

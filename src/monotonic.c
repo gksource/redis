@@ -66,8 +66,12 @@ static void monotonicInit_x86linux(void) {
         while (fgets(buf, bufflen, cpuinfo) != NULL) {
             if (regexec(&cpuGhzRegex, buf, nmatch, pmatch, 0) == 0) {
                 buf[pmatch[1].rm_eo] = '\0';
-                double ghz = atof(&buf[pmatch[1].rm_so]);
-                mono_ticksPerMicrosecond = (long)(ghz * 1000);
+                char *ghzStart = &buf[pmatch[1].rm_so];
+                char *ghzEnd = NULL;
+                double ghz = strtod(ghzStart, &ghzEnd);
+                if (ghzEnd != ghzStart && *ghzEnd == '\0' && ghz > 0 && ghz < 1000) {
+                    mono_ticksPerMicrosecond = (long)(ghz * 1000);
+                }
                 break;
             }
         }
