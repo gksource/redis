@@ -565,14 +565,14 @@ char *zstrdup(const char *s) {
 }
 
 size_t zmalloc_used_memory(void) {
-    size_t local_num_active_threads;
+    size_t local_num_active_threads = 0;
     long long total_mem = 0;
     atomicGet(num_active_threads,local_num_active_threads);
     if (local_num_active_threads > MAX_THREADS) {
         local_num_active_threads = MAX_THREADS;
     }
     for (size_t i = 0; i < local_num_active_threads; ++i) {
-        long long thread_used_mem;
+        long long thread_used_mem = 0;
         atomicGet(used_memory[i].used_memory, thread_used_mem);
         total_mem += thread_used_mem;
     }
@@ -586,7 +586,7 @@ size_t zmalloc_get_peak_memory(void) {
 }
 
 time_t zmalloc_get_peak_memory_time(void) {
-    time_t t;
+    time_t t = 0;
     atomicGet(zmalloc_peak_time, t);
     return t;
 }
@@ -682,7 +682,7 @@ int get_proc_stat_ll(int i, long long *res) {
 #if defined(HAVE_PROC_STAT)
 size_t zmalloc_get_rss(void) {
     int page = sysconf(_SC_PAGESIZE);
-    long long rss;
+    long long rss = 0;
 
     /* RSS is the 24th field in /proc/<pid>/stat */
     if (!get_proc_stat_ll(24, &rss)) return 0;
@@ -697,7 +697,7 @@ size_t zmalloc_get_rss(void) {
 
 size_t zmalloc_get_rss(void) {
     task_t task = MACH_PORT_NULL;
-    struct task_basic_info t_info;
+    struct task_basic_info t_info = {0};
     mach_msg_type_number_t t_info_count = TASK_BASIC_INFO_COUNT;
 
     if (task_for_pid(current_task(), getpid(), &task) != KERN_SUCCESS)
@@ -712,7 +712,7 @@ size_t zmalloc_get_rss(void) {
 #include <sys/user.h>
 
 size_t zmalloc_get_rss(void) {
-    struct kinfo_proc info;
+    struct kinfo_proc info = {0};
     size_t infolen = sizeof(info);
     int mib[4];
     mib[0] = CTL_KERN;
@@ -908,7 +908,7 @@ int zmalloc_get_allocator_info(int refresh_stats, size_t *allocated, size_t *act
      * These pages will show as RSS for the process, until the OS decides to re-use them. */
     if (muzzy) {
         char buf[100];
-        size_t pmuzzy, page;
+        size_t pmuzzy = 0, page = 0;
         snprintf(buf, sizeof(buf), "stats.arenas.%u.pmuzzy", MALLCTL_ARENAS_ALL);
         assert(!je_mallctl(buf, &pmuzzy, &sz, NULL, 0));
         assert(!je_mallctl("arenas.page", &page, &sz, NULL, 0));
@@ -946,14 +946,14 @@ int zmalloc_get_allocator_info_by_arena(unsigned int arena, int refresh_stats, s
     je_mallctl(buf, resident, &sz, NULL, 0);
     /* Unlike resident, this doesn't not include the pages jemalloc reserves
      * for re-use (purge will clean that). */
-    size_t pactive, page;
+    size_t pactive = 0, page = 0;
     snprintf(buf, sizeof(buf), "stats.arenas.%u.pactive", arena);
     assert(!je_mallctl(buf, &pactive, &sz, NULL, 0));
     assert(!je_mallctl("arenas.page", &page, &sz, NULL, 0));
     *active = pactive * page;
     /* Unlike zmalloc_used_memory, this matches the stats.resident by taking
      * into account all allocations done by this process (not only zmalloc). */
-    size_t small_allcated, large_allacted;
+    size_t small_allcated = 0, large_allacted = 0;
     snprintf(buf, sizeof(buf), "stats.arenas.%u.small.allocated", arena);
     assert(!je_mallctl(buf, &small_allcated, &sz, NULL, 0));
     *allocated += small_allcated;
@@ -1075,7 +1075,7 @@ size_t zmalloc_get_smap_bytes_by_field(char *field, long pid) {
  */
 size_t zmalloc_get_smap_bytes_by_field(char *field, long pid) {
 #if defined(__APPLE__)
-    struct proc_regioninfo pri;
+    struct proc_regioninfo pri = {0};
     if (pid == -1) pid = getpid();
     if (proc_pidinfo(pid, PROC_PIDREGIONINFO, 0, &pri,
                      PROC_PIDREGIONINFO_SIZE) == PROC_PIDREGIONINFO_SIZE)
@@ -1169,7 +1169,7 @@ size_t zmalloc_get_memory_size(void) {
 #define TEST(name) printf("test — %s\n", name);
 
 int zmalloc_test(int argc, char **argv, int flags) {
-    void *ptr, *ptr2;
+    void *ptr = NULL, *ptr2 = NULL;
 
     UNUSED(argc);
     UNUSED(argv);

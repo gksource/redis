@@ -3405,9 +3405,18 @@ void getKeysFreeResult(getKeysResult *result) {
 int genericGetKeys(int storeKeyOfs, int keyCountOfs, int firstKeyOfs, int keyStep,
                     robj **argv, int argc, getKeysResult *result) {
     int i, num;
+    long numl;
     keyReference *keys;
 
-    num = atoi(argv[keyCountOfs]->ptr);
+    /* If the count is not a valid integer, the command is going to reply
+     * with a syntax error, so treat it as no keys. */
+    if (!string2l(argv[keyCountOfs]->ptr, sdslen(argv[keyCountOfs]->ptr), &numl) ||
+        numl < 1 || numl > INT_MAX)
+    {
+        result->numkeys = 0;
+        return 0;
+    }
+    num = (int)numl;
     /* Sanity check. Don't return any key if the command is going to
      * reply with syntax error. (no input keys). */
     if (num < 1 || num > (argc - firstKeyOfs)/keyStep) {

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <limits.h>
 #include <time.h>
 #include <sys/time.h>
 #include <signal.h>
@@ -1076,6 +1077,20 @@ static clusterNode **addClusterNode(clusterNode *node) {
     return config.cluster_nodes;
 }
 
+/* Parse a base 10 integer in the range [min,max] from the whole string 's'.
+ * Returns 1 and stores the value in *out on success, 0 on any error. */
+static int parseIntInRange(const char *s, long min, long max, int *out) {
+    char *end;
+    long val;
+    if (s == NULL || *s == '\0') return 0;
+    errno = 0;
+    val = strtol(s, &end, 10);
+    if (errno == ERANGE || end == s || *end != '\0') return 0;
+    if (val < min || val > max) return 0;
+    *out = (int)val;
+    return 1;
+}
+
 /* TODO: This should be refactored to use CLUSTER SLOTS, the migrating/importing
  * information is anyway not used.
  */
@@ -1147,7 +1162,11 @@ static int fetchClusterConfiguration(void) {
             addr = paddr + 1;
             /* If internal bus is specified, then just drop it. */
             if ((paddr = strchr(addr, '@')) != NULL) *paddr = '\0';
-            port = atoi(addr);
+            if (!parseIntInRange(addr, 0, 65535, &port)) {
+                fprintf(stderr, "Invalid CLUSTER NODES reply: invalid port.\n");
+                success = 0;
+                goto cleanup;
+            }
         }
         if (myself) {
             node = firstNode;
@@ -1213,14 +1232,23 @@ static int fetchClusterConfiguration(void) {
                     p = dash;
                     int start, stop;
                     *p = '\0';
-                    start = atoi(slotsdef);
-                    stop = atoi(p + 1);
+                    if (!parseIntInRange(slotsdef, 0, CLUSTER_SLOTS - 1, &start) ||
+                        !parseIntInRange(p + 1, 0, CLUSTER_SLOTS - 1, &stop)) {
+                        fprintf(stderr, "Invalid CLUSTER NODES reply: invalid slot range.\n");
+                        success = 0;
+                        goto cleanup;
+                    }
                     while (start <= stop) {
                         int slot = start++;
                         node->slots[node->slots_count++] = slot;
                     }
                 } else if (p > slotsdef) {
-                    int slot = atoi(slotsdef);
+                    int slot;
+                    if (!parseIntInRange(slotsdef, 0, CLUSTER_SLOTS - 1, &slot)) {
+                        fprintf(stderr, "Invalid CLUSTER NODES reply: invalid slot.\n");
+                        success = 0;
+                        goto cleanup;
+                    }
                     node->slots[node->slots_count++] = slot;
                 }
             }
@@ -1458,7 +1486,12 @@ int parseOptions(int argc, char **argv) {
                     "We now immediately exit on error to avoid false results.\n");
         } else if (!strcmp(argv[i],"--seed")) {
             if (lastarg) goto invalid;
-            int rand_seed = atoi(argv[++i]);
+            char *seed_end;
+            errno = 0;
+            long seed_val = strtol(argv[++i], &seed_end, 10);
+            if (errno == ERANGE || seed_end == argv[i] || *seed_end != '\0' ||
+                seed_val < INT_MIN || seed_val > INT_MAX) goto invalid;
+            int rand_seed = (int)seed_val;
             srandom(rand_seed);
             init_genrand64(rand_seed);
         } else if (!strcmp(argv[i],"-t")) {

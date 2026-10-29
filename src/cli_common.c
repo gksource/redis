@@ -291,6 +291,21 @@ static sds percentDecode(const char *pe, size_t len) {
  *   path:      ["/" [<db>]]
  *
  *  [1]: https://www.iana.org/assignments/uri-schemes/prov/redis */
+static int parseUriPort(const char *s) {
+    char *eptr;
+    long val;
+
+    errno = 0;
+    val = strtol(s, &eptr, 10);
+    if (eptr == s || errno == ERANGE || val < 0 || val > 65535 ||
+        (*eptr != '\0' && *eptr != '/'))
+    {
+        fprintf(stderr,"Invalid port in URI\n");
+        exit(1);
+    }
+    return (int)val;
+}
+
 void parseRedisUri(const char *uri, const char* tool_name, cliConnInfo *connInfo, int *tls_flag) {
 #ifdef USE_OPENSSL
     UNUSED(tool_name);
@@ -341,13 +356,13 @@ void parseRedisUri(const char *uri, const char* tool_name, cliConnInfo *connInfo
             curr += 1;
             if ((port = strchr(curr, ']'))) {
                 if (*(port+1) == ':') {
-                    connInfo->hostport = atoi(port + 2);
+                    connInfo->hostport = parseUriPort(port + 2);
                 }
                 host = port - 1;
             }
         } else {
             if ((port = strchr(curr, ':'))) {
-                connInfo->hostport = atoi(port + 1);
+                connInfo->hostport = parseUriPort(port + 1);
                 host = port - 1;
             }
         }
