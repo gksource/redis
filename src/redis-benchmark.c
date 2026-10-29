@@ -21,6 +21,7 @@
 #include <assert.h>
 #include <math.h>
 #include <pthread.h>
+#include <limits.h>
 
 #include <sdscompat.h> /* Use hiredis' sds compat header that maps sds calls to their hi_ variants */
 #include <sds.h> /* Use hiredis sds. */
@@ -50,6 +51,30 @@
 #define CONFIG_LATENCY_HISTOGRAM_MAX_VALUE 3000000L          /* <= 3 secs(us precision) */
 #define CONFIG_LATENCY_HISTOGRAM_INSTANT_MAX_VALUE 3000000L   /* <= 3 secs(us precision) */
 #define SHOW_THROUGHPUT_INTERVAL 250  /* 250ms */
+
+/* Strictly parse a base 10 integer that fits in an int. Returns 1 on success
+ * and stores the value in *out, 0 if the string is empty, has trailing
+ * garbage or is out of range. */
+static int parseIntStrict(const char *s, int *out) {
+    char *end;
+    long v;
+    if (s == NULL || *s == '\0') return 0;
+    errno = 0;
+    v = strtol(s, &end, 10);
+    if (errno != 0 || *end != '\0' || v < INT_MIN || v > INT_MAX) return 0;
+    *out = (int)v;
+    return 1;
+}
+
+/* Parse the integer argument of a command line option or exit with an error. */
+static int parseIntOption(const char *opt, const char *s) {
+    int v;
+    if (!parseIntStrict(s, &v)) {
+        fprintf(stderr, "Invalid value '%s' for option %s.\n", s, opt);
+        exit(1);
+    }
+    return v;
+}
 
 #define CLIENT_GET_EVENTLOOP(c) \
     (c->thread_id >= 0 ? config.threads[c->thread_id]->el : config.el)
@@ -1147,7 +1172,11 @@ static int fetchClusterConfiguration(void) {
             addr = paddr + 1;
             /* If internal bus is specified, then just drop it. */
             if ((paddr = strchr(addr, '@')) != NULL) *paddr = '\0';
-            port = atoi(addr);
+            if (!parseIntStrict(addr, &port)) {
+                fprintf(stderr, "Invalid CLUSTER NODES reply: invalid port.\n");
+                success = 0;
+                goto cleanup;
+            }
         }
         if (myself) {
             node = firstNode;
@@ -1213,14 +1242,29 @@ static int fetchClusterConfiguration(void) {
                     p = dash;
                     int start, stop;
                     *p = '\0';
-                    start = atoi(slotsdef);
-                    stop = atoi(p + 1);
+                    if (!parseIntStrict(slotsdef, &start) ||
+                        !parseIntStrict(p + 1, &stop) ||
+                        start < 0 || stop >= CLUSTER_SLOTS ||
+                        node->slots_count + (stop - start + 1) > CLUSTER_SLOTS)
+                    {
+                        fprintf(stderr, "Invalid CLUSTER NODES reply: invalid slots range.\n");
+                        success = 0;
+                        goto cleanup;
+                    }
                     while (start <= stop) {
                         int slot = start++;
                         node->slots[node->slots_count++] = slot;
                     }
                 } else if (p > slotsdef) {
-                    int slot = atoi(slotsdef);
+                    int slot;
+                    if (!parseIntStrict(slotsdef, &slot) ||
+                        slot < 0 || slot >= CLUSTER_SLOTS ||
+                        node->slots_count >= CLUSTER_SLOTS)
+                    {
+                        fprintf(stderr, "Invalid CLUSTER NODES reply: invalid slot.\n");
+                        success = 0;
+                        goto cleanup;
+                    }
                     node->slots[node->slots_count++] = slot;
                 }
             }
@@ -1381,7 +1425,7 @@ int parseOptions(int argc, char **argv) {
 
         if (!strcmp(argv[i],"-c")) {
             if (lastarg) goto invalid;
-            config.numclients = atoi(argv[++i]);
+            config.numclients = parseIntOption("-c", argv[++i]);
         } else if (!strcmp(argv[i],"-v") || !strcmp(argv[i], "--version")) {
             sds version = cliVersion();
             printf("redis-benchmark %s\n", version);
@@ -1389,17 +1433,17 @@ int parseOptions(int argc, char **argv) {
             exit(0);
         } else if (!strcmp(argv[i],"-n")) {
             if (lastarg) goto invalid;
-            config.requests = atoi(argv[++i]);
+            config.requests = parseIntOption("-n", argv[++i]);
         } else if (!strcmp(argv[i],"-k")) {
             if (lastarg) goto invalid;
-            config.keepalive = atoi(argv[++i]);
+            config.keepalive = parseIntOption("-k", argv[++i]);
         } else if (!strcmp(argv[i],"-h")) {
             if (lastarg) goto invalid;
             sdsfree(config.conn_info.hostip);
             config.conn_info.hostip = sdsnew(argv[++i]);
         } else if (!strcmp(argv[i],"-p")) {
             if (lastarg) goto invalid;
-            config.conn_info.hostport = atoi(argv[++i]);
+            config.conn_info.hostport = parseIntOption("-p", argv[++i]);
             if (config.conn_info.hostport < 0 || config.conn_info.hostport > 65535) {
                 fprintf(stderr, "Invalid server port.\n");
                 exit(1);
@@ -1426,12 +1470,12 @@ int parseOptions(int argc, char **argv) {
             config.resp3 = 1;
         } else if (!strcmp(argv[i],"-d")) {
             if (lastarg) goto invalid;
-            config.datasize = atoi(argv[++i]);
+            config.datasize = parseIntOption("-d", argv[++i]);
             if (config.datasize < 1) config.datasize=1;
             if (config.datasize > 1024*1024*1024) config.datasize = 1024*1024*1024;
         } else if (!strcmp(argv[i],"-P")) {
             if (lastarg) goto invalid;
-            config.pipeline = atoi(argv[++i]);
+            config.pipeline = parseIntOption("-P", argv[++i]);
             if (config.pipeline <= 0) config.pipeline=1;
         } else if (!strcmp(argv[i],"-r")) {
             if (lastarg) goto invalid;
@@ -1441,7 +1485,7 @@ int parseOptions(int argc, char **argv) {
                 if (*p < '0' || *p > '9') goto invalid;
             }
             config.randomkeys = 1;
-            config.randomkeys_keyspacelen = atoi(next);
+            config.randomkeys_keyspacelen = parseIntOption("-r", next);
             if (config.randomkeys_keyspacelen < 0)
                 config.randomkeys_keyspacelen = 0;
         } else if (!strcmp(argv[i],"-q")) {
@@ -1458,7 +1502,7 @@ int parseOptions(int argc, char **argv) {
                     "We now immediately exit on error to avoid false results.\n");
         } else if (!strcmp(argv[i],"--seed")) {
             if (lastarg) goto invalid;
-            int rand_seed = atoi(argv[++i]);
+            int rand_seed = parseIntOption("--seed", argv[++i]);
             srandom(rand_seed);
             init_genrand64(rand_seed);
         } else if (!strcmp(argv[i],"-t")) {
@@ -1474,16 +1518,16 @@ int parseOptions(int argc, char **argv) {
             sdstolower(config.tests);
         } else if (!strcmp(argv[i],"--dbnum")) {
             if (lastarg) goto invalid;
-            config.conn_info.input_dbnum = atoi(argv[++i]);
+            config.conn_info.input_dbnum = parseIntOption("--dbnum", argv[++i]);
             config.input_dbnumstr = sdsfromlonglong(config.conn_info.input_dbnum);
         } else if (!strcmp(argv[i],"--precision")) {
             if (lastarg) goto invalid;
-            config.precision = atoi(argv[++i]);
+            config.precision = parseIntOption("--precision", argv[++i]);
             if (config.precision < 0) config.precision = DEFAULT_LATENCY_PRECISION;
             if (config.precision > MAX_LATENCY_PRECISION) config.precision = MAX_LATENCY_PRECISION;
         } else if (!strcmp(argv[i],"--threads")) {
              if (lastarg) goto invalid;
-             config.num_threads = atoi(argv[++i]);
+             config.num_threads = parseIntOption("--threads", argv[++i]);
              if (config.num_threads > MAX_THREADS) {
                  fprintf(stderr,
                          "WARNING: Too many threads, limiting threads to %d.\n",

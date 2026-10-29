@@ -14,6 +14,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
+#include <limits.h>
 
 int main(int argc, char **argv) {
     struct stat stat;
@@ -26,7 +28,16 @@ int main(int argc, char **argv) {
 
     srand(time(NULL));
     char *filename = argv[1];
-    cycles = atoi(argv[2]);
+    char *endptr;
+    errno = 0;
+    long parsed = strtol(argv[2],&endptr,10);
+    if (errno != 0 || endptr == argv[2] || *endptr != '\0' ||
+        parsed < 0 || parsed > INT_MAX)
+    {
+        fprintf(stderr,"Invalid cycles value: %s\n",argv[2]);
+        exit(1);
+    }
+    cycles = (int)parsed;
     fd = open(filename,O_RDWR);
     if (fd == -1) {
         perror("open");

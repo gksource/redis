@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 #ifdef USE_OPENSSL
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -358,7 +359,14 @@ void parseRedisUri(const char *uri, const char* tool_name, cliConnInfo *connInfo
     if (curr == end) return;
 
     /* Extract database number. */
-    connInfo->input_dbnum = atoi(curr);
+    char *dbend = NULL;
+    errno = 0;
+    long dbnum = strtol(curr, &dbend, 10);
+    if (dbend == curr || errno == ERANGE || dbnum < 0 || dbnum > INT_MAX) {
+        fprintf(stderr,"Invalid database number in URI\n");
+        exit(1);
+    }
+    connInfo->input_dbnum = (int)dbnum;
 }
 
 void freeCliConnInfo(cliConnInfo connInfo){
