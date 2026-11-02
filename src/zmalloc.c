@@ -565,14 +565,14 @@ char *zstrdup(const char *s) {
 }
 
 size_t zmalloc_used_memory(void) {
-    size_t local_num_active_threads;
+    size_t local_num_active_threads = 0;
     long long total_mem = 0;
     atomicGet(num_active_threads,local_num_active_threads);
     if (local_num_active_threads > MAX_THREADS) {
         local_num_active_threads = MAX_THREADS;
     }
     for (size_t i = 0; i < local_num_active_threads; ++i) {
-        long long thread_used_mem;
+        long long thread_used_mem = 0;
         atomicGet(used_memory[i].used_memory, thread_used_mem);
         total_mem += thread_used_mem;
     }
@@ -639,8 +639,8 @@ void zmadvise_dontneed(void *ptr) {
 /* Get the i'th field from "/proc/self/stat" note i is 1 based as appears in the 'proc' man page */
 int get_proc_stat_ll(int i, long long *res) {
 #if defined(HAVE_PROC_STAT)
-    char buf[4096];
-    int fd, l;
+    char buf[4096] = {0};
+    int fd, l = 0;
     char *p, *x;
 
     if ((fd = open("/proc/self/stat",O_RDONLY)) == -1) return 0;
@@ -697,12 +697,13 @@ size_t zmalloc_get_rss(void) {
 
 size_t zmalloc_get_rss(void) {
     task_t task = MACH_PORT_NULL;
-    struct task_basic_info t_info;
+    struct task_basic_info t_info = {0};
     mach_msg_type_number_t t_info_count = TASK_BASIC_INFO_COUNT;
 
     if (task_for_pid(current_task(), getpid(), &task) != KERN_SUCCESS)
         return 0;
-    task_info(task, TASK_BASIC_INFO, (task_info_t)&t_info, &t_info_count);
+    if (task_info(task, TASK_BASIC_INFO, (task_info_t)&t_info, &t_info_count) != KERN_SUCCESS)
+        return 0;
 
     return t_info.resident_size;
 }
@@ -712,7 +713,7 @@ size_t zmalloc_get_rss(void) {
 #include <sys/user.h>
 
 size_t zmalloc_get_rss(void) {
-    struct kinfo_proc info;
+    struct kinfo_proc info = {0};
     size_t infolen = sizeof(info);
     int mib[4];
     mib[0] = CTL_KERN;
@@ -740,7 +741,7 @@ size_t zmalloc_get_rss(void) {
 #endif
 
 size_t zmalloc_get_rss(void) {
-    struct kinfo_proc2 info;
+    struct kinfo_proc2 info = {0};
     size_t infolen = sizeof(info);
     int mib[6];
     mib[0] = CTL_KERN;
@@ -777,7 +778,7 @@ size_t zmalloc_get_rss(void) {
 #include <fcntl.h>
 
 size_t zmalloc_get_rss(void) {
-    struct prpsinfo info;
+    struct prpsinfo info = {0};
     char filename[256];
     int fd;
 
@@ -813,20 +814,26 @@ size_t zmalloc_get_rss(void) {
 size_t zmalloc_get_frag_smallbins_by_arena(unsigned int arena) {
     unsigned nbins;
     size_t sz, frag = 0;
+    int ret;
 
     /* Pre-convert mallctl paths to MIB for better performance.
      * This eliminates snprintf and string parsing overhead in the loop. */
-    size_t bin_size_mib[8], bin_nregs_mib[8], curregs_mib[8], curslabs_mib[8];
+    size_t bin_size_mib[8] = {0}, bin_nregs_mib[8] = {0}, curregs_mib[8] = {0}, curslabs_mib[8] = {0};
     size_t bin_size_miblen = 8, bin_nregs_miblen = 8, curregs_miblen = 8, curslabs_miblen = 8;
 
     sz = sizeof(unsigned);
-    assert(!je_mallctl("arenas.nbins", &nbins, &sz, NULL, 0));
+    ret = je_mallctl("arenas.nbins", &nbins, &sz, NULL, 0);
+    assert(!ret);
 
     /* Convert all patterns to MIB (required before using je_mallctlbymib) */
-    assert(!je_mallctlnametomib("arenas.bin.0.size", bin_size_mib, &bin_size_miblen));
-    assert(!je_mallctlnametomib("arenas.bin.0.nregs", bin_nregs_mib, &bin_nregs_miblen));
-    assert(!je_mallctlnametomib("stats.arenas.0.bins.0.curregs", curregs_mib, &curregs_miblen));
-    assert(!je_mallctlnametomib("stats.arenas.0.bins.0.curslabs", curslabs_mib, &curslabs_miblen));
+    ret = je_mallctlnametomib("arenas.bin.0.size", bin_size_mib, &bin_size_miblen);
+    assert(!ret);
+    ret = je_mallctlnametomib("arenas.bin.0.nregs", bin_nregs_mib, &bin_nregs_miblen);
+    assert(!ret);
+    ret = je_mallctlnametomib("stats.arenas.0.bins.0.curregs", curregs_mib, &curregs_miblen);
+    assert(!ret);
+    ret = je_mallctlnametomib("stats.arenas.0.bins.0.curslabs", curslabs_mib, &curslabs_miblen);
+    assert(!ret);
 
     for (unsigned j = 0; j < nbins; j++) {
         size_t curregs, curslabs, reg_size;
@@ -835,24 +842,28 @@ size_t zmalloc_get_frag_smallbins_by_arena(unsigned int arena) {
         /* The size of the current bin */
         bin_size_mib[2] = j;
         sz = sizeof(size_t);
-        assert(!je_mallctlbymib(bin_size_mib, bin_size_miblen, &reg_size, &sz, NULL, 0));
+        ret = je_mallctlbymib(bin_size_mib, bin_size_miblen, &reg_size, &sz, NULL, 0);
+        assert(!ret);
 
         /* Number of used regions in the bin */
         curregs_mib[2] = arena;
         curregs_mib[4] = j;
         sz = sizeof(size_t);
-        assert(!je_mallctlbymib(curregs_mib, curregs_miblen, &curregs, &sz, NULL, 0));
+        ret = je_mallctlbymib(curregs_mib, curregs_miblen, &curregs, &sz, NULL, 0);
+        assert(!ret);
 
         /* Number of regions per slab */
         bin_nregs_mib[2] = j;
         sz = sizeof(uint32_t);
-        assert(!je_mallctlbymib(bin_nregs_mib, bin_nregs_miblen, &nregs, &sz, NULL, 0));
+        ret = je_mallctlbymib(bin_nregs_mib, bin_nregs_miblen, &nregs, &sz, NULL, 0);
+        assert(!ret);
 
         /* Number of current slabs in the bin */
         curslabs_mib[2] = arena;
         curslabs_mib[4] = j;
         sz = sizeof(size_t);
-        assert(!je_mallctlbymib(curslabs_mib, curslabs_miblen, &curslabs, &sz, NULL, 0));
+        ret = je_mallctlbymib(curslabs_mib, curslabs_miblen, &curslabs, &sz, NULL, 0);
+        assert(!ret);
 
         /* Calculate the fragmentation bytes for the current bin and add it to the total. */
         frag += ((nregs * curslabs) - curregs) * reg_size;
@@ -909,9 +920,12 @@ int zmalloc_get_allocator_info(int refresh_stats, size_t *allocated, size_t *act
     if (muzzy) {
         char buf[100];
         size_t pmuzzy, page;
+        int ret;
         snprintf(buf, sizeof(buf), "stats.arenas.%u.pmuzzy", MALLCTL_ARENAS_ALL);
-        assert(!je_mallctl(buf, &pmuzzy, &sz, NULL, 0));
-        assert(!je_mallctl("arenas.page", &page, &sz, NULL, 0));
+        ret = je_mallctl(buf, &pmuzzy, &sz, NULL, 0);
+        assert(!ret);
+        ret = je_mallctl("arenas.page", &page, &sz, NULL, 0);
+        assert(!ret);
         *muzzy = pmuzzy * page;
     }
 
@@ -946,19 +960,24 @@ int zmalloc_get_allocator_info_by_arena(unsigned int arena, int refresh_stats, s
     je_mallctl(buf, resident, &sz, NULL, 0);
     /* Unlike resident, this doesn't not include the pages jemalloc reserves
      * for re-use (purge will clean that). */
-    size_t pactive, page;
+    size_t pactive = 0, page = 0;
+    int ret;
     snprintf(buf, sizeof(buf), "stats.arenas.%u.pactive", arena);
-    assert(!je_mallctl(buf, &pactive, &sz, NULL, 0));
-    assert(!je_mallctl("arenas.page", &page, &sz, NULL, 0));
+    ret = je_mallctl(buf, &pactive, &sz, NULL, 0);
+    assert(!ret);
+    ret = je_mallctl("arenas.page", &page, &sz, NULL, 0);
+    assert(!ret);
     *active = pactive * page;
     /* Unlike zmalloc_used_memory, this matches the stats.resident by taking
      * into account all allocations done by this process (not only zmalloc). */
-    size_t small_allcated, large_allacted;
+    size_t small_allcated = 0, large_allacted = 0;
     snprintf(buf, sizeof(buf), "stats.arenas.%u.small.allocated", arena);
-    assert(!je_mallctl(buf, &small_allcated, &sz, NULL, 0));
+    ret = je_mallctl(buf, &small_allcated, &sz, NULL, 0);
+    assert(!ret);
     *allocated += small_allcated;
     snprintf(buf, sizeof(buf), "stats.arenas.%u.large.allocated", arena);
-    assert(!je_mallctl(buf, &large_allacted, &sz, NULL, 0));
+    ret = je_mallctl(buf, &large_allacted, &sz, NULL, 0);
+    assert(!ret);
     *allocated += large_allacted;
 
     /* Total size of consumed meomry in unused regs in small bins (AKA external fragmentation). */
